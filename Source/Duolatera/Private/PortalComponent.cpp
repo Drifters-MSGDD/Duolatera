@@ -15,6 +15,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
 #include "MotionControllerComponent.h"
+#include "GlobalPostProcess.h"
 
 
 // Sets default values for this component's properties
@@ -39,9 +40,9 @@ void UPortalComponent::BeginPlay()
 	detector->OnComponentEndOverlap.AddDynamic(this, &UPortalComponent::OnEndOverlap);
 
 	// create the portal plane's material instance and set the plane's material
-	portalMat = UKismetMaterialLibrary::CreateDynamicMaterialInstance(this, portalMatParent);
-	frontPlane->SetMaterial(0, portalMat);
-	backPlane->SetMaterial(0, portalMat);
+	portalOffsetMat = UKismetMaterialLibrary::CreateDynamicMaterialInstance(this, portalMatParent);
+	frontPlane->SetMaterial(0, portalOffsetMat);
+	backPlane->SetMaterial(0, portalOffsetMat);
 
 	if (GEngine->XRSystem)
 		hmd = GEngine->XRSystem->GetHMDDevice();
@@ -91,10 +92,30 @@ void UPortalComponent::SetDestinationPortal(UPortalComponent* portal)
 	// Create the RT's based on viewport size and set destination scene captures to render to them
 	for (int i = 0; i < 2; i++)
 	{
-		portalMat->SetTextureParameterValue(i ? "PortalTextureRight" : "PortalTextureLeft", portalRTs[i]);
 		destinationCams[i]->TextureTarget = portalRTs[i];
 		destinationCams[i]->bUseCustomProjectionMatrix = true;
 	}
+	PrimaryComponentTick.SetTickFunctionEnable(true);
+}
+
+void UPortalComponent::RenderThisPortal()
+{
+	if (!portalPPMat)
+	{
+		portalPPMat = ((AGlobalPostProcess*)UGameplayStatics::GetActorOfClass(this, AGlobalPostProcess::StaticClass()))->GetPortalRenderMaterial();
+	}
+
+	destinationPortal->renderEyes = false;
+
+	// The following needs to be on the NEXT tick, or the player may experience flashing
+	GetWorld()->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			portalPPMat->SetTextureParameterValue("PortalTextureLeft", portalRTs[0]);
+			portalPPMat->SetTextureParameterValue("PortalTextureRight", portalRTs[1]);
+			renderEyes = true;
+			// Disable warp on other portal so it can't be seen from this portal.
+			destinationPortal->ResetWarp();
+		}));
 }
 
 void UPortalComponent::SetPlaneOffset(float offset)
@@ -144,9 +165,6 @@ void UPortalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 {
 	UActorComponent::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	AActor* canvas = GetOwner()->GetAttachParentActor();
-	if (!canvas) return; // portal needs to be attached to a canvas
-
 	if (!player) // didn't exist last frame, so check now
 	{
 		player = UGameplayStatics::GetPlayerPawn(this, 0);
@@ -157,31 +175,33 @@ void UPortalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	FVector playerCamLoc = playerCam->GetComponentLocation();
 	
 	// Check which planes to use for scene captures based on where the player is
-	bool playerInFront = canvas->GetActorForwardVector().Dot((playerCamLoc - canvas->GetActorLocation()).GetSafeNormal()) >= 0.f;
+	bool playerInFront = GetOwner()->GetActorForwardVector().Dot((playerCamLoc - GetOwner()->GetActorLocation()).GetSafeNormal()) >= 0.f;
 	UPortalPlane* enterPlane = playerInFront ? frontPlane : backPlane;
-
-	if (destinationCams[0]->GetAttachParent() != enterPlane->destination) // switching sides
-	{
-		destinationCams[0]->AttachToComponent(enterPlane->destination, FAttachmentTransformRules(EAttachmentRule::KeepWorld, false));
-		destinationCams[1]->AttachToComponent(enterPlane->destination, FAttachmentTransformRules(EAttachmentRule::KeepWorld, false));
-	}
-
-	FTransform t = enterPlane->GetComponentTransform();
-	FVector loc = t.InverseTransformPosition(playerCamLoc) * FVector(-1, -1, 1);
-	FQuat rot = FQuat(0, 0, 1, 0) * t.InverseTransformRotation(playerCam->GetComponentQuat());
-
-	// update the destination portal's scene captures
-	UpdateEye(DeltaTime, 0, loc, rot, enterPlane);
-#ifdef UE_BUILD_DEBUG
-	if (hmd && hmd->IsHMDEnabled() && GEngine->StereoRenderingDevice->IsStereoEnabled())
-		UpdateEye(DeltaTime, 1, loc, rot, enterPlane);
-#else
-	UpdateEye(DeltaTime, 1, loc, rot, enterPlane);
-#endif
-
-	// Update portal "warp"
 	FVector portalForward = enterPlane->GetForwardVector();
-	portalMat->SetVectorParameterValue("OffsetDistance", FVector4(portalForward * warpAmount, 1.f));
+
+	if (renderEyes)
+	{
+		// Update portal "warp"
+		portalOffsetMat->SetVectorParameterValue("OffsetDistance", FVector4(portalForward * warpAmount, 1.f));
+
+		// If needed, switch sides
+		if (destinationCams[0]->GetAttachParent() != enterPlane->destination) 
+		{
+			destinationCams[0]->AttachToComponent(enterPlane->destination, FAttachmentTransformRules(EAttachmentRule::KeepWorld, false));
+			destinationCams[1]->AttachToComponent(enterPlane->destination, FAttachmentTransformRules(EAttachmentRule::KeepWorld, false));
+		}
+
+		// update the destination portal's scene captures
+		FTransform t = enterPlane->GetComponentTransform();
+		FVector loc = t.InverseTransformPosition(playerCamLoc) * FVector(-1, -1, 1);
+		FQuat rot = FQuat(0, 0, 1, 0) * t.InverseTransformRotation(playerCam->GetComponentQuat());
+
+		UpdateEye(DeltaTime, 0, loc, rot, enterPlane);
+#ifdef UE_BUILD_DEBUG
+		if (hmd && hmd->IsHMDEnabled() && GEngine->StereoRenderingDevice->IsStereoEnabled())
+#endif
+			UpdateEye(DeltaTime, 1, loc, rot, enterPlane);
+	}
 
 	// Check if objects should teleport to the other side of the portal
 	TArray<AActor*> actorsToMove;
@@ -209,8 +229,8 @@ void UPortalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 
 		if (a == player)
 		{
-			PrimaryComponentTick.SetTickFunctionEnable(false);
-			destinationPortal->PrimaryComponentTick.SetTickFunctionEnable(true);
+			// Skip the player if they shouldn't be allowed to move through
+			if (!traversable) continue;
 		}
 		else
 		{
@@ -220,11 +240,14 @@ void UPortalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 			c->SetPhysicsAngularVelocityInDegrees(PortalTransformVector(c->GetPhysicsAngularVelocityInDegrees(), enterPlane));
 		}
 		a->SetActorTransform(PortalTransform(a->GetTransform(), enterPlane), false, nullptr, ETeleportType::TeleportPhysics);
+		OnPortalTraversed.Broadcast(a, this, destinationPortal);
 	}
 }
 
 void UPortalComponent::UpdateEye(float dt, int stereoIndex, FVector initCameraLoc, FQuat initCameraRot, UPortalPlane* enterPlane)
 {
+	if (!GEngine->XRSystem) return;
+
 	auto stereo = GEngine->XRSystem->GetStereoRenderingDevice();
 	UPortalPlane* exit = enterPlane->destination;
 
@@ -233,41 +256,58 @@ void UPortalComponent::UpdateEye(float dt, int stereoIndex, FVector initCameraLo
 	destinationCams[stereoIndex]->ClipPlaneBase = exit->GetComponentLocation() + (forward * -3.f);
 	destinationCams[stereoIndex]->ClipPlaneNormal = forward;
 	
+	// get eye projection and view matrices
+	FMatrix eyeProj = stereo->GetStereoProjectionMatrix(stereoIndex);
+	FMinimalViewInfo viewInfo;
+	playerCam->GetCameraView(dt, viewInfo);
+	stereo->CalculateStereoViewOffset(stereoIndex, viewInfo.Rotation, GetWorld()->GetWorldSettings()->WorldToMeters, viewInfo.Location);
+	FMatrix view, junk;
+	UGameplayStatics::GetViewProjectionMatrix(viewInfo, view, junk, junk);
+	FMatrix viewProjT = view * eyeProj;
+
+	// update transform, view and projection
+	destinationCams[stereoIndex]->CustomProjectionMatrix = eyeProj;
+	FRotator eyeRot = initCameraRot.Rotator();
+	FVector eyeLoc(0);
+	stereo->CalculateStereoViewOffset(stereoIndex, eyeRot, GetWorld()->GetWorldSettings()->WorldToMeters, eyeLoc);
+	destinationCams[stereoIndex]->SetRelativeLocationAndRotation(initCameraLoc + eyeLoc * (FVector(1.f) / exit->GetComponentScale()), eyeRot.Quaternion());
+
+	// We cannot rely on Unreal's screen-aligned UV's, as they update a frame
+	// behind everything else due to the Late Update system. Therefore we need
+	// to perform the world-to-screen-space calculations ourselves, which we
+	// do in the Portal Post-Process material by providing the render target's
+	// View-Projection matrix, one column at a time.
+	portalPPMat->SetVectorParameterValue(stereoIndex ? "VPCol0Right" : "VPCol0Left", FVector4(viewProjT.M[0][0], viewProjT.M[1][0], viewProjT.M[2][0], viewProjT.M[3][0]));
+	portalPPMat->SetVectorParameterValue(stereoIndex ? "VPCol1Right" : "VPCol1Left", FVector4(viewProjT.M[0][1], viewProjT.M[1][1], viewProjT.M[2][1], viewProjT.M[3][1]));
+	portalPPMat->SetVectorParameterValue(stereoIndex ? "VPCol3Right" : "VPCol3Left", FVector4(viewProjT.M[0][3], viewProjT.M[1][3], viewProjT.M[2][3], viewProjT.M[3][3]));
+
+	// render the scene from this eye's point of view onto its Render Target
+	destinationCams[stereoIndex]->CaptureScene();
 	// If plane not in view, don't render.
-	if (IsInFrustum(enterPlane))
-	{
-		// get eye projection and view matrices
-		FMatrix eyeProj = stereo->GetStereoProjectionMatrix(stereoIndex);
-		FMinimalViewInfo viewInfo;
-		playerCam->GetCameraView(dt, viewInfo);
-		stereo->CalculateStereoViewOffset(stereoIndex, viewInfo.Rotation, GetWorld()->GetWorldSettings()->WorldToMeters, viewInfo.Location);
-		FMatrix view, junk;
-		UGameplayStatics::GetViewProjectionMatrix(viewInfo, view, junk, junk);
-		FMatrix viewProjT = view * eyeProj;
-
-		// update transform, view and projection
-		destinationCams[stereoIndex]->CustomProjectionMatrix = eyeProj;
-		FRotator eyeRot = initCameraRot.Rotator();
-		FVector eyeLoc(0);
-		stereo->CalculateStereoViewOffset(stereoIndex, eyeRot, GetWorld()->GetWorldSettings()->WorldToMeters, eyeLoc);
-		destinationCams[stereoIndex]->SetRelativeLocationAndRotation(initCameraLoc + eyeLoc * (FVector(1.f) / exit->GetComponentScale()), eyeRot.Quaternion());
-
-		// update the Render Target's View-Projection columns
-		portalMat->SetVectorParameterValue(stereoIndex ? "VPCol0Right" : "VPCol0Left", FVector4(viewProjT.M[0][0], viewProjT.M[1][0], viewProjT.M[2][0], viewProjT.M[3][0]));
-		portalMat->SetVectorParameterValue(stereoIndex ? "VPCol1Right" : "VPCol1Left", FVector4(viewProjT.M[0][1], viewProjT.M[1][1], viewProjT.M[2][1], viewProjT.M[3][1]));
-		portalMat->SetVectorParameterValue(stereoIndex ? "VPCol3Right" : "VPCol3Left", FVector4(viewProjT.M[0][3], viewProjT.M[1][3], viewProjT.M[2][3], viewProjT.M[3][3]));
-
-		// render the scene from this eye's point of view onto its Render Target
-		destinationCams[stereoIndex]->CaptureScene();
-	}
+	//if (IsInFrustum(enterPlane))
+	//{
+	//}
 }
 
 bool UPortalComponent::IsInFrustum(UStaticMeshComponent* plane)
 {
 	APlayerController* pctrl = GetWorld()->GetFirstPlayerController();
-	FVector2D screenLoc;
-	return pctrl->ProjectWorldLocationToScreen(plane->Bounds.GetBox().Min, screenLoc) ||
-		pctrl->ProjectWorldLocationToScreen(plane->Bounds.GetBox().Max, screenLoc);
+	FTransform tm = plane->GetComponentTransform();
+	FVector extents = plane->Bounds.GetBox().GetExtent();
+	extents.X = warpAmount;
+	FVector verts[4]
+	{
+		extents, -extents,
+		FVector(extents.X, extents.Y, -extents.Z),
+		FVector(extents.X, -extents.Y, extents.Z),
+	};
+
+	for (int i = 0; i < 4; i++)
+	{
+		FVector2D screenLoc;
+		if (pctrl->ProjectWorldLocationToScreen(tm.TransformPosition(verts[i]), screenLoc)) return true;
+	}
+	return false;
 }
 
 void UPortalComponent::OnBeginOverlap(UPrimitiveComponent* overlappedComponent, AActor* otherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
@@ -281,4 +321,9 @@ void UPortalComponent::OnEndOverlap(UPrimitiveComponent* overlappedComponent, AA
 	if (otherActor == GetOwner()) return;
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Orange, OtherComp->GetName());
 	overlapMap.Remove(OtherComp);
+}
+
+void UPortalComponent::ResetWarp()
+{
+	portalOffsetMat->SetVectorParameterValue("OffsetDistance", FVector4(0));
 }

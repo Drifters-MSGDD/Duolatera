@@ -25,7 +25,7 @@ void ADialogueManager::BeginPlay()
     if (!DialogueQ.IsEmpty())
     {
         CurrentEntryID = 0;
-        AfterEachDialogue();
+        DuringDialogue();
         NextEntry();
     }
 }
@@ -52,14 +52,14 @@ void ADialogueManager::ManageCurrentEntryID()
     if (CurrentEntryID > DialogueArray.Num())
         return;
 
-    AfterEachDialogue();
+    DuringDialogue();
 }
 
 void ADialogueManager::NextEntry() 
 {
     DialogueQ.Dequeue(CurrentEntry);
     DisplayDialogue(CurrentEntry.Dialogue);
-    PlayAnimation(CurrentEntry.LeftAnimation, CurrentEntry.RightAnimation);
+    UpdateUIImage(CurrentEntry.UI_image);
     if (CurrentEntry.Input == TIME)
         StartTiming = true;
 }
@@ -68,9 +68,9 @@ void ADialogueManager::Proceed()
 {
     if (!DialogueQ.IsEmpty())
     {
-        NextEntry();
-
         ManageCurrentEntryID();
+
+        NextEntry();
     }
 }
 
@@ -81,9 +81,7 @@ void ADialogueManager::HandlePlayerInput(const RequiredInput PlayerInput)
         ClearDialogueUI();
 
         if (CurrentEntry.bCanContinue) 
-        {
-            Proceed();
-        }
+            Proceed();        
         else
             BetweenDialogue();
     }

@@ -17,7 +17,8 @@ enum RequiredInput
 	SNAP			UMETA(DisplayName = "Left Thumbstick"),
 	TELEPORT		UMETA(DisplayName = "Right Thumbstick"),
 	GRAB			UMETA(DisplayName = "Grab"),
-	TRIGGER			UMETA(DisplayName = "Trigger")
+	TRIGGER			UMETA(DisplayName = "Trigger"),
+	EVENT			UMETA(DisplayName = "Event")
 };
 
 USTRUCT(BlueprintType)
@@ -35,9 +36,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DialogueEntry")
 	bool bCanContinue = true;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DialogueEntry")
-	UAnimSequence* LeftAnimation;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DialogueEntry")
-	UAnimSequence* RightAnimation;
+	UTexture2D* UI_image;
 };
 
 UCLASS()
@@ -85,19 +84,19 @@ public:
 
 	ADialogueManager();
 
-	UFUNCTION(BlueprintCallable, Category = "Dialogue")
+	UFUNCTION(BlueprintCallable, Category = "Dialogue", meta = (Description = "Takes in player's input and tries to proceed"))
 	void HandlePlayerInput(const RequiredInput PlayerInput);
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "Dialogue")
-	void AfterEachDialogue();
+	UFUNCTION(BlueprintImplementableEvent, Category = "Dialogue", meta = (Description = "Events that happens when new dialogue shows up"))
+	void DuringDialogue();
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "Dialogue")
+	UFUNCTION(BlueprintImplementableEvent, Category = "Dialogue", meta = (Description = "Events that happens when new dialogue shows up"))
 	void BetweenDialogue();
 
-	UFUNCTION(BlueprintCallable, Category = "Dialogue")
+	UFUNCTION(BlueprintCallable, Category = "Dialogue", meta = (Description = "Do not call in blueprint"))
 	void ManageCurrentEntryID();
 
-	UFUNCTION(BlueprintCallable, Category = "Dialogue")
+	UFUNCTION(BlueprintCallable, Category = "Dialogue", meta = (Description = "Goes to the next dialogue entry"))
 	void Proceed();
 
 	UFUNCTION(BlueprintCallable, Category = "Dialogue")
@@ -110,7 +109,7 @@ public:
 	void ClearDialogueUI();
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Dialogue")
-	void PlayAnimation(UAnimSequence* LeftAnimation, UAnimSequence* RightAnimation);
+	void UpdateUIImage(UTexture2D* image);
 
 private:
 

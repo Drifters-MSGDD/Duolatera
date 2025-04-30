@@ -16,6 +16,8 @@ class USceneCaptureComponent2D;
 class IHeadMountedDisplay;
 class UBoxComponent;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FPortalTraversedDelegate, AActor*, object, UPortalComponent*, fromPortal, UPortalComponent*, toPortal);
+
 UCLASS(ClassGroup = (DuolateraComponents), meta = (BlueprintSpawnableComponent))
 class DUOLATERA_API UPortalPlane : public UStaticMeshComponent
 {
@@ -55,6 +57,9 @@ public:
 	UPortalComponent* GetDestinationPortal() { return destinationPortal; };
 
 	UFUNCTION(BlueprintCallable, Category = "Portals")
+	void RenderThisPortal();
+
+	UFUNCTION(BlueprintCallable, Category = "Portals")
 	// Offsets the portal planes by a specific amount
 	void SetPlaneOffset(float offset);
 
@@ -74,6 +79,19 @@ public:
 	// Transforms a given quaternion from this portal to its exit
 	static FRotator PortalTransformRotation(FRotator initRot, UPortalPlane* portalPlane);
 
+
+	UFUNCTION(BlueprintCallable, Category = "Portals")
+	void ResetWarp();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Portal Properties")
+	float warpAmount = -4.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Portal Properties")
+	bool traversable = true;
+
+	UPROPERTY(BlueprintAssignable, BlueprintCallable)
+	FPortalTraversedDelegate OnPortalTraversed;
+
 private:
 
 	UFUNCTION()
@@ -92,13 +110,11 @@ private:
 	UPROPERTY(EditInstanceOnly, Category = "Portal Properties")
 	UPortalComponent* destinationPortal;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Portal Properties")
-	float warpAmount = -4.f;
-
 	float planeOffset = 20.f;
 
 	// Portal material ptr and render targets for each eye
-	UMaterialInstanceDynamic* portalMat;
+	UMaterialInstanceDynamic* portalOffsetMat;
+	UMaterialInstanceDynamic* portalPPMat;
 	UTextureRenderTarget2D* portalRTs[2];
 	AActor* player;
 	UPortalPlane* frontPlane, * backPlane;
@@ -111,4 +127,6 @@ private:
 	// for detection and teleportation of objects through the portal
 	UBoxComponent* detector;
 	TMap<USceneComponent*, bool> overlapMap;
+	
+	bool renderEyes = false;
 };

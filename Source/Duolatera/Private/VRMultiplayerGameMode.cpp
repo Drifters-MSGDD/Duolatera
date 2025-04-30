@@ -2,6 +2,7 @@
 
 
 #include "VRMultiplayerGameMode.h"
+#include <VRMultiplayerGameInstance.h>
 
 //constructor
 AVRMultiplayerGameMode::AVRMultiplayerGameMode()
@@ -58,6 +59,23 @@ AActor* AVRMultiplayerGameMode::ChoosePlayerStart_Implementation(AController* Pl
 	TArray<APlayerStart*> UnOccupiedStartPoints;
 	TArray<APlayerStart*> OccupiedStartPoints;
 	UWorld* World = GetWorld();
+
+	//Noya: Get the number of the act that player want to load
+	UGameInstance* GI = GetGameInstance();
+	UVRMultiplayerGameInstance* VRGI = Cast<UVRMultiplayerGameInstance>(GI);
+	int ActNum = VRGI->ActToLoad;
+	FName ActTag = FName(FString("Act").Append(FString::FromInt(ActNum)));
+	//if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Green, FString::Printf(TEXT("ACT %i"), ActNum));
+	/*FString str = "World: " + FString(World->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("%s"), *str);
+	int actorCount = 0;
+	for (TActorIterator<AActor> I(World); I; ++I) {
+		str = "AActor: " + I->GetName();
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *str);
+		actorCount++;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("total actor in world: %i"), actorCount);*/
+
 	for (TActorIterator<APlayerStart> It(World); It; ++It)
 	{
 		APlayerStart* PlayerStart = *It;
@@ -76,7 +94,8 @@ AActor* AVRMultiplayerGameMode::ChoosePlayerStart_Implementation(AController* Pl
 			// which means EncroachingBlockingGeometry always consider no overlaping happening, even if this playerStart already has a VRPawn
 			// However, I stepped in the function, which shows that our DefaulPawnClass, VRPawn, it's rootComponent is nullptr, 
 			// and that's where this function returns false, thus if returns true
-			if (!World->EncroachingBlockingGeometry(PawnToFit, ActorLocation, ActorRotation))
+			// Noya: Only playerstarts with the tag of the num that player wants to start in will be added into UnOccupiedStartPoints
+			if (!World->EncroachingBlockingGeometry(PawnToFit, ActorLocation, ActorRotation) && (PlayerStart->PlayerStartTag == ActTag || PlayerStart->PlayerStartTag == NAME_None))
 			{
 				UnOccupiedStartPoints.Add(PlayerStart);
 			}
@@ -86,6 +105,7 @@ AActor* AVRMultiplayerGameMode::ChoosePlayerStart_Implementation(AController* Pl
 			}
 		}
 	}
+	//if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Red, FString::Printf(TEXT("UnOccupiedStartPoints: %i"), UnOccupiedStartPoints.Num()));
 	//sort the PlayerStart arr, for a matter of fact, only the UnOccipied one is enough.
 	PlayerStartBubbleSort(UnOccupiedStartPoints);
 	PlayerStartBubbleSort(OccupiedStartPoints);
@@ -105,6 +125,24 @@ AActor* AVRMultiplayerGameMode::ChoosePlayerStart_Implementation(AController* Pl
 	}
 	return FoundPlayerStart;
 }
+
+void AVRMultiplayerGameMode::Logout(AController* Exiting)
+{
+	Super::Logout(Exiting);
+	OnPlayerLogoutDelegate.Broadcast();
+}
+
+void AVRMultiplayerGameMode::HandleBothPlayerReady()
+{
+	OnBothPlayerReadyDelegate.Broadcast();
+}
+
+//void AVRMultiplayerGameMode::HandleMatchHasStarted()
+//{
+//	Super::HandleMatchHasStarted();
+//	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Red, FString::Printf(TEXT("AVRMultiplayerGameMode::Match Has Started")));
+//	OnMatchHasStartedDelegate.Broadcast();
+//}
 
 
 
